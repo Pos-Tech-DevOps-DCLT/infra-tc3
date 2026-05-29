@@ -8,12 +8,12 @@ This guide walks you through provisioning the AWS infrastructure and deploying t
 
 | Resource | Details |
 |---|---|
-| EKS Cluster | Kubernetes 1.31, 2 worker nodes (auto-scales 1–6) |
-| RDS PostgreSQL | 3 independent instances — auth-service, flag-service, targeting-service |
-| ElastiCache Redis | 1 Redis node — used by evaluation-service |
+| EKS Cluster | Kubernetes 1.32, t3.micro nodes (auto-scales 1–6) |
+| RDS PostgreSQL | 3 independent db.t3.micro instances — auth-service, flag-service, targeting-service |
+| ElastiCache Redis | 1 cache.t3.micro Redis node — used by evaluation-service |
 | DynamoDB | 1 table (`analytics-events`) — used by analytics-service |
-| SQS | 1 queue (`evaluation-events`) + Dead Letter Queue |
-| ECR | 5 repositories — one per microservice |
+| SQS | 1 queue (`evaluation-events`) + Dead Letter Queue — shared by evaluation-service and analytics-service |
+| ECR | 5 repositories — auth-service, flag-service, targeting-service, evaluation-service, analytics-service |
 
 ---
 
