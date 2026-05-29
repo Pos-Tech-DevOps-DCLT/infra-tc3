@@ -8,8 +8,8 @@ This guide walks you through provisioning the AWS infrastructure and deploying t
 
 | Resource | Details |
 |---|---|
-| EKS Cluster | Kubernetes 1.31, 2 nodes (auto-scales 1–6) |
-| RDS PostgreSQL | 3 independent instances — auth, flag, targeting |
+| EKS Cluster | Kubernetes 1.31, 2 worker nodes (auto-scales 1–6) |
+| RDS PostgreSQL | 3 independent instances — auth-service, flag-service, targeting-service |
 | ElastiCache Redis | 1 Redis node — used by evaluation-service |
 | DynamoDB | 1 table (`analytics-events`) — used by analytics-service |
 | SQS | 1 queue (`evaluation-events`) + Dead Letter Queue |
@@ -24,7 +24,6 @@ Install these on your machine before starting.
 ### Terraform
 
 ```bash
-# Linux
 wget -O terraform.zip https://releases.hashicorp.com/terraform/1.9.0/terraform_1.9.0_linux_amd64.zip
 unzip terraform.zip
 sudo mv terraform /usr/local/bin/
@@ -43,8 +42,7 @@ aws --version
 ### kubectl
 
 ```bash
-curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+snap install kubectl --classic
 kubectl version --client
 ```
 
@@ -77,47 +75,64 @@ Verify it works:
 
 ```bash
 aws sts get-caller-identity
+# Should print your account ID and user ARN
 ```
 
-You should see your account ID and user ARN.
-
-> **Account requirement:** Creating 3 RDS instances requires a standard AWS account (not the free-plan which limits you to 1 instance). Add a payment method in the AWS Console to remove that restriction before proceeding.
+> **Account requirement:** Creating 3 RDS instances requires a standard AWS account. The free-plan limits you to 1 RDS instance. Add a payment method in the AWS Console to remove that restriction before proceeding.
 
 ---
 
-## Part 3 — Provision the infrastructure
+## Part 3 — Deploy ECR repositories
 
-All commands below must be run from inside the `terraform/` folder.
+The ECR repositories must exist before you can push Docker images. This is a separate, lightweight Terraform deployment that only creates the 5 repositories.
 
 ```bash
-cd terraform
+cd terraform/ecr
+terraform init
+terraform plan -out=tfplan
+terraform apply tfplan
 ```
 
-### Step 1 — Initialize Terraform
+When it completes, note the repository URLs:
 
-Downloads all required providers and modules. Run this once (and again if you ever change module sources).
+```bash
+terraform output repository_urls
+```
+
+You will need these URLs in Part 5 (pushing images) and Part 6 (Kubernetes manifests).
+
+---
+
+## Part 4 — Provision the full infrastructure
+
+This step creates the EKS cluster, RDS databases, Redis, DynamoDB, SQS, and all IAM roles. Run all commands from the `terraform/` folder.
+
+```bash
+cd ../        # if you were in terraform/ecr
+cd terraform  # or from the project root
+```
+
+### Step 1 — Initialize
 
 ```bash
 terraform init
 ```
 
-### Step 2 — Preview what will be created
+### Step 2 — Preview
 
 ```bash
 terraform plan -out=tfplan
 ```
 
-This saves the plan to a file. Review the output — you should see roughly 60 resources being created. Nothing is created yet.
+Review the output — you should see roughly 60 resources being created. Nothing is created yet.
 
-### Step 3 — Apply the plan
+### Step 3 — Apply
 
 ```bash
 terraform apply tfplan
 ```
 
-This will take **20–30 minutes**. The EKS cluster and RDS instances take the longest. Leave the terminal open until it finishes.
-
-When it completes you will see a summary of all outputs (endpoints, ARNs, etc.).
+This takes **20–30 minutes**. The EKS cluster and RDS instances take the longest. Leave the terminal open until it finishes.
 
 ### Step 4 — Connect kubectl to the cluster
 
@@ -125,95 +140,31 @@ When it completes you will see a summary of all outputs (endpoints, ARNs, etc.).
 aws eks update-kubeconfig \
   --region us-east-1 \
   --name $(terraform output -raw eks_cluster_name)
-```
 
-Verify the nodes are ready:
-
-```bash
 kubectl get nodes
+# Should show 2 nodes with status Ready
 ```
-
-You should see 2 nodes with status `Ready`.
 
 ### Step 5 — Install Helm charts
 
-Metrics Server, Nginx Ingress, and KEDA are installed via a script (not Terraform) to avoid provider timeout issues.
+Metrics Server, Nginx Ingress Controller, and KEDA are installed via a script after Terraform completes.
 
 ```bash
-# Still inside the terraform/ folder:
+# Get the KEDA role ARN from Terraform output
 KEDA_ROLE_ARN=$(terraform output -raw irsa_keda_role_arn)
 
-# Go back to the project root and run the script:
+# Go to the project root and run the script
 cd ..
 ./scripts/helm-install.sh "$KEDA_ROLE_ARN"
 ```
 
-The script adds the Helm repos, installs all three charts, and prints the load balancer hostname at the end. It takes about 3–5 minutes.
-
----
-
-## Part 4 — Collect the connection strings
-
-Run these commands inside the `terraform/` folder to retrieve all the values you will need for the Kubernetes manifests.
-
-```bash
-# Everything in one command (copy this output and save it)
-terraform output -json connection_strings
-```
-
-To get individual values:
-
-```bash
-# ECR image URLs (one per service)
-terraform output ecr_repository_urls
-
-# RDS endpoints (host addresses)
-terraform output -json rds_endpoints
-
-# SQS queue URL
-terraform output sqs_queue_url
-
-# DynamoDB table name
-terraform output dynamodb_table_name
-
-# IRSA role ARNs (needed for evaluation-service and analytics-service manifests)
-terraform output irsa_evaluation_service_role_arn
-terraform output irsa_analytics_service_role_arn
-```
-
-### Retrieve database passwords from Secrets Manager
-
-Passwords are never stored in Terraform — they are in AWS Secrets Manager.
-
-```bash
-# auth-service database
-aws secretsmanager get-secret-value \
-  --secret-id tech-challenge-prod/rds/auth \
-  --query SecretString --output text | jq .
-
-# flag-service database
-aws secretsmanager get-secret-value \
-  --secret-id tech-challenge-prod/rds/flag \
-  --query SecretString --output text | jq .
-
-# targeting-service database
-aws secretsmanager get-secret-value \
-  --secret-id tech-challenge-prod/rds/targeting \
-  --query SecretString --output text | jq .
-
-# Redis auth token and endpoint (evaluation-service)
-aws secretsmanager get-secret-value \
-  --secret-id tech-challenge-prod/elasticache/redis \
-  --query SecretString --output text | jq .
-```
-
-Each command returns a JSON object with `host`, `port`, `username`, `password`, and `dbname`.
+The script installs all three charts and prints the load balancer hostname at the end. It takes about 3–5 minutes.
 
 ---
 
 ## Part 5 — Build and push Docker images
 
-Run from the **project root** (not the `terraform/` folder).
+Run from the **project root**.
 
 ```bash
 # Get your AWS account ID
@@ -224,30 +175,85 @@ aws ecr get-login-password --region us-east-1 \
   | docker login --username AWS --password-stdin \
     $AWS_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com
 
-# Build each service image
+# Build each service image (adjust the source paths to match your project)
 docker build -t auth-service:latest       ./auth-service
 docker build -t flag-service:latest       ./flag-service
 docker build -t targeting-service:latest  ./targeting-service
 docker build -t evaluation-service:latest ./evaluation-service
 docker build -t analytics-service:latest  ./analytics-service
 
-# Push using the helper script
+# Push all images to ECR
 ./scripts/publish-images.sh us-east-1 $AWS_ACCOUNT_ID latest
 ```
 
 ---
 
-## Part 6 — Deploy to Kubernetes
+## Part 6 — Collect connection strings
 
-### Step 1 — Fill in the placeholder values in the manifests
+Run these from the `terraform/` folder. Copy and save all outputs — you will need them for the Kubernetes manifests.
 
-The files under `k8s/` contain placeholders that must be replaced with real values from the previous steps.
+```bash
+# All connection info in one shot
+terraform output -json connection_strings
 
-| Placeholder | How to get the value |
+# ECR image URLs
+terraform output ecr_repository_urls
+
+# RDS endpoints
+terraform output -json rds_endpoints
+
+# SQS queue URL
+terraform output sqs_queue_url
+
+# DynamoDB table name
+terraform output dynamodb_table_name
+
+# IRSA role ARNs for evaluation-service and analytics-service
+terraform output irsa_evaluation_service_role_arn
+terraform output irsa_analytics_service_role_arn
+```
+
+### Retrieve database passwords
+
+Passwords are stored in AWS Secrets Manager, not in Terraform state.
+
+```bash
+# auth-service database credentials
+aws secretsmanager get-secret-value \
+  --secret-id tech-challenge-prod/rds/auth \
+  --query SecretString --output text | jq .
+
+# flag-service database credentials
+aws secretsmanager get-secret-value \
+  --secret-id tech-challenge-prod/rds/flag \
+  --query SecretString --output text | jq .
+
+# targeting-service database credentials
+aws secretsmanager get-secret-value \
+  --secret-id tech-challenge-prod/rds/targeting \
+  --query SecretString --output text | jq .
+
+# Redis auth token and endpoint (evaluation-service)
+aws secretsmanager get-secret-value \
+  --secret-id tech-challenge-prod/elasticache/redis \
+  --query SecretString --output text | jq .
+```
+
+Each command returns a JSON with `host`, `port`, `username`, `password`, and `dbname`.
+
+---
+
+## Part 7 — Deploy to Kubernetes
+
+### Step 1 — Fill in placeholder values in the manifests
+
+The files under `k8s/` contain placeholders. Replace each one with the real value from the steps above.
+
+| Placeholder | Command to get the value |
 |---|---|
-| `<ECR_URL>` | `terraform output -json ecr_repository_urls \| jq -r '.["auth-service"]'` (change service name as needed) |
-| `<IRSA_ROLE_ARN>` in `evaluation-service/deployment.yaml` | `terraform output irsa_evaluation_service_role_arn` |
-| `<IRSA_ROLE_ARN>` in `analytics-service/deployment.yaml` | `terraform output irsa_analytics_service_role_arn` |
+| `<ECR_URL>` | `cd terraform && terraform output -json ecr_repository_urls \| jq -r '.["auth-service"]'` (change service name as needed) |
+| `<IRSA_ROLE_ARN>` in `evaluation-service/deployment.yaml` | `terraform output -raw irsa_evaluation_service_role_arn` |
+| `<IRSA_ROLE_ARN>` in `analytics-service/deployment.yaml` | `terraform output -raw irsa_analytics_service_role_arn` |
 | `<BASE64_DB_HOST>` | `echo -n "<host from Secrets Manager>" \| base64` |
 | `<BASE64_DB_PASSWORD>` | `echo -n "<password from Secrets Manager>" \| base64` |
 | `<BASE64_REDIS_HOST>` | `echo -n "<host from Secrets Manager>" \| base64` |
@@ -258,11 +264,11 @@ The files under `k8s/` contain placeholders that must be replaced with real valu
 ### Step 2 — Apply all manifests
 
 ```bash
-# From the project root
+# From the project root — applies everything in the correct order
 ./scripts/k8s-apply.sh
 ```
 
-Or manually, in this order:
+Or step by step:
 
 ```bash
 kubectl apply -f k8s/namespaces.yaml
@@ -280,9 +286,9 @@ kubectl apply -f k8s/ingress.yaml
 kubectl get svc -n ingress-nginx ingress-nginx-controller
 ```
 
-The `EXTERNAL-IP` column shows the load balancer hostname. It may take 2–3 minutes to appear.
+The `EXTERNAL-IP` column shows the NLB hostname. It may take 2–3 minutes to appear after the Helm install.
 
-| Path | Service |
+| Path | Routes to |
 |---|---|
 | `<EXTERNAL-IP>/auth/` | auth-service |
 | `<EXTERNAL-IP>/flags/` | flag-service |
@@ -294,12 +300,28 @@ The `EXTERNAL-IP` column shows the load balancer hostname. It may take 2–3 min
 
 ## Tear down
 
-To delete all resources and stop incurring costs:
+### Destroy the full infrastructure
+
+Before destroying, delete the Nginx Ingress load balancer from Kubernetes. If you don't, the NLB and its Elastic IPs will block the VPC from being deleted.
 
 ```bash
+helm uninstall ingress-nginx -n ingress-nginx
+kubectl delete namespace ingress-nginx --ignore-not-found
+
+# Wait ~30 seconds for AWS to remove the NLB, then:
 cd terraform
 terraform plan -destroy -out=tfplan-destroy
 terraform apply tfplan-destroy
 ```
 
-> This permanently deletes all databases and their data. There are no automatic backups.
+### Destroy only the ECR repositories
+
+```bash
+cd terraform/ecr
+terraform plan -destroy -out=tfplan-destroy
+terraform apply tfplan-destroy
+```
+
+> **Warning:** Destroying ECR will delete all repositories and every Docker image inside them. This cannot be undone.
+
+> **Warning:** Destroying the full infrastructure permanently deletes all databases and their data. There are no automatic backups.
