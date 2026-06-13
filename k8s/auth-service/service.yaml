@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-service
+  namespace: auth-service
+  labels:
+    app: auth-service
+    version: "1.0"
+spec:
+  type: ClusterIP
+  selector:
+    app: auth-service
+  ports:
+    - protocol: TCP
+      port: 8001
+      targetPort: 8001
