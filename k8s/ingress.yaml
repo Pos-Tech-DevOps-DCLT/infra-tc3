@@ -1,0 +1,153 @@
+# Ingress do ToggleMaster
+#
+# Como cada serviço está em seu próprio namespace, criamos ExternalName Services
+# no namespace 'default' para que o Ingress possa rotear para eles.
+#
+# Diagrama de fluxo:
+#   Internet → LoadBalancer (NLB/ALB criado pelo Nginx Controller)
+#           → Ingress (roteamento por path)
+#           → ExternalName Service (proxy cross-namespace)
+#           → ClusterIP Service (no namespace do serviço)
+#           → Pod
+#
+# Após aplicar, obtenha o hostname externo com:
+#   kubectl get ingress togglemaster-ingress -n default
+#   ou
+#   kubectl get svc -n ingress-nginx ingress-nginx-controller
+
+# ── ExternalName Services (proxy cross-namespace) ─────────────────────────────
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-service
+  namespace: default
+  labels:
+    app: auth-service
+spec:
+  type: ExternalName
+  externalName: auth-service.auth-service.svc.cluster.local
+  ports:
+    - port: 8001
+      targetPort: 8001
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: flag-service
+  namespace: default
+  labels:
+    app: flag-service
+spec:
+  type: ExternalName
+  externalName: flag-service.flag-service.svc.cluster.local
+  ports:
+    - port: 8002
+      targetPort: 8002
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: targeting-service
+  namespace: default
+  labels:
+    app: targeting-service
+spec:
+  type: ExternalName
+  externalName: targeting-service.targeting-service.svc.cluster.local
+  ports:
+    - port: 8003
+      targetPort: 8003
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: evaluation-service
+  namespace: default
+  labels:
+    app: evaluation-service
+spec:
+  type: ExternalName
+  externalName: evaluation-service.evaluation-service.svc.cluster.local
+  ports:
+    - port: 8004
+      targetPort: 8004
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: analytics-service
+  namespace: default
+  labels:
+    app: analytics-service
+spec:
+  type: ExternalName
+  externalName: analytics-service.analytics-service.svc.cluster.local
+  ports:
+    - port: 8005
+      targetPort: 8005
+---
+
+# ── Ingress ────────────────────────────────────────────────────────────────────
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: togglemaster-ingress
+  namespace: default
+  labels:
+    project: togglemaster
+  annotations:
+    # Reescreve o path: /auth/v1/foo → /v1/foo (captura o grupo $2)
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+    # Usa implementação específica do nginx para suportar regex nos paths
+    nginx.ingress.kubernetes.io/use-regex: "true"
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          # /auth  → auth-service:8001
+          - path: /auth(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: auth-service
+                port:
+                  number: 8001
+
+          # /flags → flag-service:8002
+          - path: /flags(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flag-service
+                port:
+                  number: 8002
+
+          # /targeting → targeting-service:8003
+          - path: /targeting(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: targeting-service
+                port:
+                  number: 8003
+
+          # /evaluate → evaluation-service:8004
+          - path: /evaluate(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: evaluation-service
+                port:
+                  number: 8004
+
+          # /analytics → analytics-service:8005
+          - path: /analytics(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: analytics-service
+                port:
+                  number: 8005
