@@ -1,0 +1,42 @@
+#O KEDA consulta a fila SQS a cada 15 segundos. Se tiver 5 mensagens, sobe para 2 pods.
+#Se tiver 10, sobe para 3. E assim por diante até o máximo de 5 pods. Quando a fila
+#esvaziar e passar 60 segundos, desde de volta para 1. O "TriggerAuthentication" diz ao
+#KEDA para usar a role IAM que configuramos via IRSA - sem que precisemos colocar as 
+#credenciais no YAML. OBS: ambos monitoram a mesma fila SQS pois o evaluation-service produz
+#mensagens e o analytics-service consome. Ambos devem escalar juntos quando a fila crescer.
+
+#ScaledObject — KEDA escala o analytics-service baseado na fila SQS
+#IMPORTANTE: substitua <AWS_ACCOUNT_ID> pela conta real antes de aplicar.
+#Obtenha com: cd terraform && terraform output -raw sqs_queue_url
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: analytics-service-scaledobject
+  namespace: analytics-service
+  labels:
+    app: analytics-service
+spec:
+  scaleTargetRef:
+    name: analytics-service
+  minReplicaCount: 1
+  maxReplicaCount: 5
+  cooldownPeriod: 60
+  pollingInterval: 15
+  triggers:
+    - type: aws-sqs-queue
+      authenticationRef:
+        name: analytics-service-keda-auth
+      metadata:
+        queueURL: https://sqs.us-east-1.amazonaws.com/142069230126/tech-challenge-prod-evaluation-events
+        queueLength: "5"
+        awsRegion: us-east-1
+        identityOwner: operator
+---
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: analytics-service-keda-auth
+  namespace: analytics-service
+spec:
+  podIdentity:
+    provider: aws

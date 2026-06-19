@@ -1,0 +1,73 @@
+# Copy this file to terraform.tfvars and fill in your values.
+# cp terraform.tfvars.example terraform.tfvars
+
+# ── General ──────────────────────────────────────────────────────────────────
+aws_region   = "us-east-1"
+project_name = "tech-challenge"
+environment  = "prod"
+
+# ── EKS — Cluster ─────────────────────────────────────────────────────────────
+eks_cluster_version     = "1.31"
+eks_node_instance_types = ["t3.medium"]
+
+# Auto Scaling config (required: min=1, desired=2, max=4)
+eks_node_min_size     = 1
+eks_node_desired_size = 2
+eks_node_max_size     = 4
+eks_node_disk_size    = 20
+
+# ── VPC ───────────────────────────────────────────────────────────────────────
+vpc_cidr           = "10.0.0.0/16"
+availability_zones = ["us-east-1a", "us-east-1b", "us-east-1c"]
+
+# ── ECR — 5 repositories (one per microservice) ───────────────────────────────
+ecr_repositories = [
+  "auth-service",
+  "flag-service",
+  "targeting-service",
+  "evaluation-service",
+  "analytics-service"
+]
+ecr_image_retention_count = 10
+
+# ── RDS — 3 PostgreSQL instances ──────────────────────────────────────────────
+rds_engine_version = "15.8"
+rds_username       = "dbadmin"   # passwords are auto-generated and stored in Secrets Manager
+rds_multi_az       = false
+
+rds_instances = {
+  auth = {
+    db_name           = "authdb"        # used by auth-service
+    instance_class    = "db.t3.micro"
+    allocated_storage = 20
+  }
+  flag = {
+    db_name           = "flagdb"        # used by flag-service
+    instance_class    = "db.t3.micro"
+    allocated_storage = 20
+  }
+  targeting = {
+    db_name           = "targetingdb"   # used by targeting-service
+    instance_class    = "db.t3.micro"
+    allocated_storage = 20
+  }
+}
+
+# ── ElastiCache Redis — used by evaluation-service ───────────────────────────
+elasticache_node_type       = "cache.t3.micro"
+elasticache_num_cache_nodes = 1
+elasticache_engine_version  = "7.0"
+
+# ── DynamoDB — used by analytics-service ─────────────────────────────────────
+# Adjust table_name and hash_key to match what the analytics-service source code expects.
+dynamodb_table_name   = "analytics-events"
+dynamodb_billing_mode = "PAY_PER_REQUEST"
+dynamodb_hash_key     = "event_id"
+dynamodb_range_key    = ""   # leave empty if no sort key is needed
+
+# ── SQS — evaluation-service (producer) → analytics-service (consumer) ───────
+sqs_queue_name                = "evaluation-events"
+sqs_visibility_timeout        = 30
+sqs_message_retention_seconds = 86400   # 1 day
+sqs_enable_dlq                = true
+sqs_max_receive_count         = 3
