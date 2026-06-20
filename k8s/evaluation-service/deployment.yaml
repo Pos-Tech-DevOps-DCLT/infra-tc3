@@ -21,7 +21,7 @@ spec:
       serviceAccountName: evaluation-service
       containers:
         - name: evaluation-service
-          image: 142069230126.dkr.ecr.us-east-1.amazonaws.com/tech-challenge-prod/evaluation-service:latest
+          image: 375546530898.dkr.ecr.us-east-1.amazonaws.com/tech-challenge-prod/evaluation-service:latest
           ports:
             - containerPort: 8004
           resources:

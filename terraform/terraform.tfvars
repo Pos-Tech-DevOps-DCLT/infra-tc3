@@ -9,8 +9,13 @@ availability_zones = ["us-east-1a", "us-east-1b", "us-east-1c"]
 
 # EKS
 eks_cluster_version     = "1.32"
+<<<<<<< HEAD
 eks_node_instance_types = ["t3.medium"]   # free-tier eligible; smallest viable for EKS
 eks_node_desired_size   = 2
+=======
+eks_node_instance_types = ["t3.micro"]   # free-tier eligible; smallest viable for EKS
+eks_node_desired_size   = 1
+>>>>>>> main
 eks_node_min_size       = 1
 eks_node_max_size       = 6
 eks_node_disk_size      = 20
@@ -26,7 +31,11 @@ ecr_repositories = [
 ecr_image_retention_count = 10
 
 # RDS — 3 independent PostgreSQL instances (one per service), as required
+<<<<<<< HEAD
 rds_engine_version = "15.13"
+=======
+rds_engine_version = "15.8"
+>>>>>>> main
 rds_username       = "dbadmin"
 rds_multi_az       = false
 
