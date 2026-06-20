@@ -1,0 +1,24 @@
+# Terraform — main
+terraform/.terraform/
+terraform/terraform.tfstate
+terraform/terraform.tfstate.backup
+terraform/tfplan*
+terraform/*.tfplan
+terraform/crash.log
+
+# Terraform — ECR-only deployment
+terraform/ecr/.terraform/
+terraform/ecr/terraform.tfstate
+terraform/ecr/terraform.tfstate.backup
+terraform/ecr/tfplan*
+terraform/ecr/*.tfplan
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
