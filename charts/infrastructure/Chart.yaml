@@ -1,0 +1,12 @@
+apiVersion: v2
+name: infrastructure
+description: Infrastructure resources - Namespaces and Ingress for ToggleMaster
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+keywords:
+  - infrastructure
+  - ingress
+  - namespaces
+maintainers:
+  - name: Tech Challenge Team

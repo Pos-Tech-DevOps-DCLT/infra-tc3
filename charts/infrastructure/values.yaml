@@ -1,0 +1,2 @@
+# Infrastructure chart - managed by Helm
+# This chart creates namespaces and ingress resources

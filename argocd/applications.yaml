@@ -1,0 +1,132 @@
+---
+# Infrastructure (Namespaces + Ingress)
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: infrastructure
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Pos-Tech-DevOps-DCLT/infra-tc3.git
+    targetRevision: main
+    path: charts/infrastructure
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+---
+# Analytics Service
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: analytics-service
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Pos-Tech-DevOps-DCLT/infra-tc3.git
+    targetRevision: main
+    path: charts/analytics-service
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: analytics-service
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+---
+# Auth Service
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: auth-service
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Pos-Tech-DevOps-DCLT/infra-tc3.git
+    targetRevision: main
+    path: charts/auth-service
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: auth-service
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+---
+# Evaluation Service
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: evaluation-service
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Pos-Tech-DevOps-DCLT/infra-tc3.git
+    targetRevision: main
+    path: charts/evaluation-service
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: evaluation-service
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+---
+# Flag Service
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: flag-service
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Pos-Tech-DevOps-DCLT/infra-tc3.git
+    targetRevision: main
+    path: charts/flag-service
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: flag-service
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+---
+# Targeting Service
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: targeting-service
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Pos-Tech-DevOps-DCLT/infra-tc3.git
+    targetRevision: main
+    path: charts/targeting-service
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: targeting-service
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

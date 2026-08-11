@@ -1,0 +1,12 @@
+apiVersion: v2
+name: targeting-service
+description: Targeting Service - ToggleMaster Feature Flag System
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+keywords:
+  - targeting
+  - feature-flags
+  - togglemaster
+maintainers:
+  - name: Tech Challenge Team

@@ -1,0 +1,12 @@
+apiVersion: v2
+name: analytics-service
+description: Analytics Service - ToggleMaster Feature Flag System
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+keywords:
+  - analytics
+  - feature-flags
+  - togglemaster
+maintainers:
+  - name: Tech Challenge Team
