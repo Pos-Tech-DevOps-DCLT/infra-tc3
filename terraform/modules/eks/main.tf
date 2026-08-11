@@ -145,10 +145,12 @@ resource "aws_eks_node_group" "main" {
     max_unavailable = 1
   }
 
-  launch_template {
-    id      = aws_launch_template.eks_nodes.id
-    version = aws_launch_template.eks_nodes.latest_version
-  }
+  # launch_template {
+  #   id      = aws_launch_template.eks_nodes.id
+  #   version = aws_launch_template.eks_nodes.latest_version
+  # }
+
+  disk_size = var.node_disk_size
 
   labels = {
     role = "general"
