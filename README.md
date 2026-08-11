@@ -1,4 +1,4 @@
-# Tech Challenge 2 — Infrastructure Guide
+# Tech Challenge 3 — Infrastructure Guide
 
 This guide walks you through provisioning the AWS infrastructure and deploying the five microservices from scratch. No prior Terraform experience required.
 
