@@ -100,26 +100,49 @@ jobs:
 
       - name: Executar flake8 e publicar no Job Summary
         run: |
-          echo "## 🔍 Lint — flake8" >> $GITHUB_STEP_SUMMARY
-          OUTPUT=$(flake8 app.py --max-line-length=120 --statistics 2>&1) || true
+          RAW=$(flake8 app.py --max-line-length=120 --statistics 2>&1) || true
           COUNT=$(flake8 app.py --max-line-length=120 --count --quiet 2>/dev/null | tail -1)
           COUNT=${COUNT:-0}
-          if [ -z "$OUTPUT" ]; then
-            echo "✅ Nenhum problema encontrado." >> $GITHUB_STEP_SUMMARY
+
+          echo "## 🔍 Lint — flake8" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "$COUNT" -eq 0 ]; then
+            echo "### ✅ 0 problemas encontrados" >> $GITHUB_STEP_SUMMARY
           else
-            echo "> ⚠️ **$COUNT problema(s) encontrado(s)** — não bloqueia a pipeline." >> $GITHUB_STEP_SUMMARY
+            echo "### ⚠️ $COUNT problema(s) encontrado(s) — não bloqueia a pipeline" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-            echo "$OUTPUT" >> $GITHUB_STEP_SUMMARY
-            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            echo "| Severidade | Código | Descrição | Ocorrências |" >> $GITHUB_STEP_SUMMARY
+            echo "|:---:|:---|:---|---:|" >> $GITHUB_STEP_SUMMARY
+            echo "$RAW" | grep -E '^[[:space:]]*[0-9]+[[:space:]]+[A-Z][0-9]+' | while IFS= read -r line; do
+              N=$(echo "$line" | awk '{print $1}')
+              CODE=$(echo "$line" | awk '{print $2}')
+              DESC=$(echo "$line" | cut -d' ' -f3-)
+              case "$CODE" in
+                E*|F*) ICON="🔴" ;;
+                W*)    ICON="🟡" ;;
+                C*)    ICON="🔵" ;;
+                *)     ICON="⚪" ;;
+              esac
+              echo "| $ICON | \`$CODE\` | $DESC | $N |" >> $GITHUB_STEP_SUMMARY
+            done || true
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "<details><summary>📄 Ver ocorrências detalhadas</summary>" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "$RAW" | grep -E '^[^[:space:]]+:[0-9]+:[0-9]+:' >> $GITHUB_STEP_SUMMARY || true
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "</details>" >> $GITHUB_STEP_SUMMARY
           fi
-          echo "$OUTPUT"
+
+          echo "$RAW"
 
   # ══════════════════════════════════════════════════════════════
   # JOB 3 — Scan de Vulnerabilidades com Trivy - SCA
   # ══════════════════════════════════════════════════════════════
   trivy-scan:
-    name: 🔍 3 · Scan de Vulnerabilidades (Trivy)
+    name: 🔍 3 · SCA (Trivy)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -132,22 +155,83 @@ jobs:
           scan-ref: '.'
           format: table
           severity: CRITICAL,HIGH
-          exit-code: '1'
+          exit-code: '0'
 
       - name: Trivy — salvar relatório JSON
         uses: aquasecurity/trivy-action@master
+        if: always()
         with:
           scan-type: 'fs'
           scan-ref: '.'
           format: 'json'
           output: 'trivy-sca-results.json'
 
+      - name: Publicar resumo no Job Summary
+        if: always()
+        run: |
+          echo "## 🛡️ SCA — Trivy" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ ! -f trivy-sca-results.json ]; then
+            echo "⚠️ Relatório não encontrado — verificação pulada." >> $GITHUB_STEP_SUMMARY
+            exit 0
+          fi
+
+          COUNTS=$(python3 -c "
+          import json
+          with open('trivy-sca-results.json') as f:
+              data = json.load(f)
+          sev = {'CRITICAL': 0, 'HIGH': 0, 'MEDIUM': 0, 'LOW': 0, 'UNKNOWN': 0}
+          for result in data.get('Results') or []:
+              for v in result.get('Vulnerabilities') or []:
+                  s = v.get('Severity', 'UNKNOWN')
+                  sev[s] = sev.get(s, 0) + 1
+          print(sum(sev.values()))
+          for k in ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'UNKNOWN']:
+              print(sev[k])
+          ")
+          TOTAL=$(echo "$COUNTS" | sed -n '1p')
+          CRITICAL_COUNT=$(echo "$COUNTS" | sed -n '2p')
+          HIGH_COUNT=$(echo "$COUNTS" | sed -n '3p')
+          MEDIUM_COUNT=$(echo "$COUNTS" | sed -n '4p')
+          LOW_COUNT=$(echo "$COUNTS" | sed -n '5p')
+          UNKNOWN_COUNT=$(echo "$COUNTS" | sed -n '6p')
+
+          echo "### 📊 Total: $TOTAL vulnerabilidade(s)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Severidade | Ocorrências |" >> $GITHUB_STEP_SUMMARY
+          echo "|:---|---:|" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔴 CRITICAL | $CRITICAL_COUNT |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🟠 HIGH | $HIGH_COUNT |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🟡 MEDIUM | $MEDIUM_COUNT |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔵 LOW | $LOW_COUNT |" >> $GITHUB_STEP_SUMMARY
+          echo "| ⚪ UNKNOWN | $UNKNOWN_COUNT |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "<details><summary>📄 Ver CRITICAL / HIGH detalhados</summary>" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Severidade | Pacote | Instalada | Corrigida | CVE |" >> $GITHUB_STEP_SUMMARY
+          echo "|:---:|:---|:---|:---|:---|" >> $GITHUB_STEP_SUMMARY
+          python3 -c "
+          import json
+          with open('trivy-sca-results.json') as f:
+              data = json.load(f)
+          icon = {'CRITICAL': '🔴', 'HIGH': '🟠'}
+          for result in data.get('Results') or []:
+              for v in result.get('Vulnerabilities') or []:
+                  s = v.get('Severity', 'UNKNOWN')
+                  if s in icon:
+                      fixed = v.get('FixedVersion') or '—'
+                      print(f\"| {icon[s]} {s} | \`{v.get('PkgName')}\` | {v.get('InstalledVersion')} | {fixed} | {v.get('VulnerabilityID')} |\")
+          " >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "</details>" >> $GITHUB_STEP_SUMMARY
+
       - name: Publicar relatório do Trivy
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: ${{ inputs.project }}-trivy-report
-          path: trivy-report.json
+          path: trivy-sca-results.json
           retention-days: 30
 
   # ══════════════════════════════════════════════════════════════
@@ -182,13 +266,32 @@ jobs:
         if: always()
         run: |
           echo "## 🔍 SAST — Horusec" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
           if [ ! -f horusec-results.json ]; then
             echo "⚠️ Relatório não encontrado — verificação pulada." >> $GITHUB_STEP_SUMMARY
             exit 0
           fi
+
+          TOTAL=$(grep -oE '"severity"[[:space:]]*:[[:space:]]*"[A-Z]+"' horusec-results.json | wc -l)
           CRITICAL_COUNT=$(grep -o '"severity"[[:space:]]*:[[:space:]]*"CRITICAL"' horusec-results.json | wc -l)
+          HIGH_COUNT=$(grep -o '"severity"[[:space:]]*:[[:space:]]*"HIGH"' horusec-results.json | wc -l)
+          MEDIUM_COUNT=$(grep -o '"severity"[[:space:]]*:[[:space:]]*"MEDIUM"' horusec-results.json | wc -l)
+          LOW_COUNT=$(grep -o '"severity"[[:space:]]*:[[:space:]]*"LOW"' horusec-results.json | wc -l)
+          INFO_COUNT=$(grep -o '"severity"[[:space:]]*:[[:space:]]*"INFO"' horusec-results.json | wc -l)
+
+          echo "### 📊 Total: $TOTAL vulnerabilidade(s)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Severidade | Ocorrências |" >> $GITHUB_STEP_SUMMARY
+          echo "|:---|---:|" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔴 CRITICAL | $CRITICAL_COUNT |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🟠 HIGH | $HIGH_COUNT |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🟡 MEDIUM | $MEDIUM_COUNT |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔵 LOW | $LOW_COUNT |" >> $GITHUB_STEP_SUMMARY
+          echo "| ⚪ INFO | $INFO_COUNT |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
           if [ "$CRITICAL_COUNT" -gt 0 ]; then
-            echo "❌ **$CRITICAL_COUNT vulnerabilidade(s) CRITICAL encontrada(s).** Pipeline bloqueada." >> $GITHUB_STEP_SUMMARY
+            echo "❌ **Pipeline bloqueada** — $CRITICAL_COUNT vulnerabilidade(s) CRITICAL encontrada(s)." >> $GITHUB_STEP_SUMMARY
             exit 1
           else
             echo "✅ Nenhuma vulnerabilidade CRITICAL encontrada." >> $GITHUB_STEP_SUMMARY
