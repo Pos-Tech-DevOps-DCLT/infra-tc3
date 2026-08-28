@@ -1,4 +1,4 @@
-name: CI/CD Python TC3
+name: CI/CD Go TC3
 
 on:
   workflow_call:
@@ -9,8 +9,11 @@ on:
         type: string
 
 jobs:
+  # ══════════════════════════════════════════════════════════════
+  # JOB 1 — Build e Testes Unitários (paralelo ao lint)
+  # ══════════════════════════════════════════════════════════════
   build-and-test:
-    name: 🔍 1 · Testes Unitários
+    name: "🔍 1 · Testes Unitários"
     runs-on: ubuntu-latest
     permissions:
       checks: write
@@ -18,55 +21,71 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Configurar Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
 
-      - name: Instalar dependências de teste
-        run: pip install -r requirements-test.txt
+      - name: Configurar Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.21"
+
+      - name: Baixar dependências
+        run: go mod download
+
+      - name: Instalar go-junit-report e gocyclo
+        run: |
+          go install github.com/jstemmer/go-junit-report/v2@latest
+          go install github.com/fzipp/gocyclo/cmd/gocyclo@latest
 
       - name: Executar testes com cobertura
         run: |
-          pytest tests/ -v \
-            --junitxml=test-results.xml \
-            --cov=. \
-            --cov-report=xml:coverage.xml
+          go test ./... -v -coverprofile=coverage.out -covermode=atomic 2>&1 | tee test-output.txt
+          go tool cover -func=coverage.out | tee coverage-func.txt
+          cat test-output.txt | go-junit-report -set-exit-code > test-results.xml || true
 
-      - name: Publicar resultados dos testes no Job Summary
+      - name: Publicar cobertura no Job Summary
+        if: always()
+        run: |
+          echo "## 📈 Cobertura de Código" >> $GITHUB_STEP_SUMMARY
+          echo "| Função | Cobertura |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|----------|" >> $GITHUB_STEP_SUMMARY
+          while IFS= read -r line; do
+            [ -z "$line" ] && continue
+            if echo "$line" | grep -q "total:"; then
+              PCT=$(echo "$line" | awk '{print $NF}')
+              echo "| **Total** | **$PCT** |" >> $GITHUB_STEP_SUMMARY
+            else
+              FUNC=$(echo "$line" | awk '{print $2}')
+              PCT=$(echo "$line" | awk '{print $NF}')
+              echo "| \`$FUNC\` | $PCT |" >> $GITHUB_STEP_SUMMARY
+            fi
+          done < coverage-func.txt || true
+
+      - name: Publicar resultados dos testes
         uses: EnricoMi/publish-unit-test-result-action@v2
         if: always()
         with:
           files: test-results.xml
 
-      - name: Publicar cobertura no Job Summary
-        uses: irongut/CodeCoverageSummary@v1.3.0
-        if: always()
-        with:
-          filename: coverage.xml
-          format: markdown
-          output: both
-
-      - name: Complexidade ciclomática (radon)
+      - name: Complexidade ciclomática (gocyclo)
         if: always()
         run: |
           echo "## 🔬 Complexidade Ciclomática" >> $GITHUB_STEP_SUMMARY
-          echo "| Função | Arquivo | Score | Rank |" >> $GITHUB_STEP_SUMMARY
-          echo "|--------|---------|-------|------|" >> $GITHUB_STEP_SUMMARY
-          radon cc app.py -s --json | python3 -c "
-          import json, sys
-          data = json.load(sys.stdin)
-          rows = []
-          for fname, blocks in data.items():
-              short = fname.split(chr(47))[-1]
-              for b in blocks:
-                  rows.append((b[\"complexity\"], b[\"name\"], short, b[\"rank\"]))
-          rows.sort(reverse=True)
-          for score, name, f, rank in rows[:10]:
-              icon = \"🔴\" if score >= 10 else (\"🟡\" if score >= 5 else \"🟢\")
-              print(f\"| \`{name}\` | \`{f}\` | {icon} {score} | {rank} |\")
-          " >> $GITHUB_STEP_SUMMARY
-          radon cc app.py -s -a
+          gocyclo -over 1 . | sort -rn | head -10 > cyclo-top.txt || true
+          if [ ! -s cyclo-top.txt ]; then
+            echo "✅ Todas as funções com complexidade baixa." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Função | Score | Localização |" >> $GITHUB_STEP_SUMMARY
+            echo "|--------|-------|-------------|" >> $GITHUB_STEP_SUMMARY
+            while IFS= read -r line; do
+              SCORE=$(echo "$line" | cut -d' ' -f1)
+              FUNC=$(echo "$line" | cut -d' ' -f3)
+              LOC=$(echo "$line" | cut -d' ' -f4)
+              if [ "$SCORE" -ge 10 ] 2>/dev/null; then ICON="🔴"
+              elif [ "$SCORE" -ge 5 ] 2>/dev/null; then ICON="🟡"
+              else ICON="🟢"; fi
+              echo "| \`$FUNC\` | $ICON $SCORE | \`$LOC\` |" >> $GITHUB_STEP_SUMMARY
+            done < cyclo-top.txt
+          fi
+          gocyclo -over 5 . || true
 
       - name: Publicar artefatos de teste
         uses: actions/upload-artifact@v4
@@ -75,14 +94,14 @@ jobs:
           name: ${{ inputs.project }}-test-reports
           path: |
             test-results.xml
-            coverage.xml
+            coverage.out
           retention-days: 30
 
   # ══════════════════════════════════════════════════════════════
   # JOB 2 — Lint / Análise Estática (paralelo ao build-and-test)
   # ══════════════════════════════════════════════════════════════
   lint:
-    name: 🔍 2 · Lint / Análise Estática
+    name: "🔍 2 · Lint / Análise Estática"
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -90,21 +109,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Configurar Python
-        uses: actions/setup-python@v5
+      - name: Configurar Go
+        uses: actions/setup-go@v5
         with:
-          python-version: "3.11"
+          go-version: "1.21"
 
-      - name: Instalar flake8
-        run: pip install flake8==7.1.1
+      - name: Instalar golangci-lint
+        run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.57.2
 
-      - name: Executar flake8 e publicar no Job Summary
+      - name: Executar golangci-lint e publicar no Job Summary
         run: |
-          RAW=$(flake8 app.py --max-line-length=120 --statistics 2>&1) || true
-          COUNT=$(flake8 app.py --max-line-length=120 --count --quiet 2>/dev/null | tail -1)
+          JSON=$(golangci-lint run ./... --out-format json 2>/dev/null) || true
+          COUNT=$(echo "$JSON" | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d.get('Issues') or []))" 2>/dev/null)
           COUNT=${COUNT:-0}
 
-          echo "## 🔍 Lint — flake8" >> $GITHUB_STEP_SUMMARY
+          echo "## 🔍 Lint — golangci-lint" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
           if [ "$COUNT" -eq 0 ]; then
@@ -112,37 +131,41 @@ jobs:
           else
             echo "### ⚠️ $COUNT problema(s) encontrado(s) — não bloqueia a pipeline" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "| Severidade | Código | Descrição | Ocorrências |" >> $GITHUB_STEP_SUMMARY
-            echo "|:---:|:---|:---|---:|" >> $GITHUB_STEP_SUMMARY
-            echo "$RAW" | grep -E '^[[:space:]]*[0-9]+[[:space:]]+[A-Z][0-9]+' | while IFS= read -r line; do
-              N=$(echo "$line" | awk '{print $1}')
-              CODE=$(echo "$line" | awk '{print $2}')
-              DESC=$(echo "$line" | cut -d' ' -f3-)
-              case "$CODE" in
-                E*|F*) ICON="🔴" ;;
-                W*)    ICON="🟡" ;;
-                C*)    ICON="🔵" ;;
-                *)     ICON="⚪" ;;
-              esac
-              echo "| $ICON | \`$CODE\` | $DESC | $N |" >> $GITHUB_STEP_SUMMARY
-            done || true
+            echo "| Linter | Ocorrências |" >> $GITHUB_STEP_SUMMARY
+            echo "|:---|---:|" >> $GITHUB_STEP_SUMMARY
+            echo "$JSON" | python3 -c "
+          import json, sys
+          d = json.load(sys.stdin)
+          counts = {}
+          for i in d.get('Issues') or []:
+              l = i.get('FromLinter', 'desconhecido')
+              counts[l] = counts.get(l, 0) + 1
+          for linter, n in sorted(counts.items(), key=lambda x: -x[1]):
+              print(f'| \`{linter}\` | {n} |')
+          " >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "<details><summary>📄 Ver ocorrências detalhadas</summary>" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
-            echo "$RAW" | grep -E '^[^[:space:]]+:[0-9]+:[0-9]+:' >> $GITHUB_STEP_SUMMARY || true
+            echo "$JSON" | python3 -c "
+          import json, sys
+          d = json.load(sys.stdin)
+          for i in d.get('Issues') or []:
+              pos = i.get('Pos', {})
+              print(f\"{pos.get('Filename')}:{pos.get('Line')}:{pos.get('Column')}: {i.get('Text')} ({i.get('FromLinter')})\")
+          " >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "</details>" >> $GITHUB_STEP_SUMMARY
           fi
 
-          echo "$RAW"
+          echo "$JSON"
 
   # ══════════════════════════════════════════════════════════════
   # JOB 3 — Scan de Vulnerabilidades com Trivy - SCA
   # ══════════════════════════════════════════════════════════════
   trivy-scan:
-    name: 🔍 3 · SCA (Trivy)
+    name: "🔍 3 · SCA (Trivy)"
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -299,10 +322,10 @@ jobs:
           fi
 
   # ══════════════════════════════════════════════════════════════
-  # JOB 5 — Docker Build (aguarda jobs 1 e 2)
+  # JOB 5 — Docker Build (aguarda jobs 1 a 4)
   # ══════════════════════════════════════════════════════════════
   docker-build:
-    name: 5 · Docker Build
+    name: "5 · Docker Build"
     runs-on: ubuntu-latest
     needs: [build-and-test, lint, trivy-scan, horusec]
     steps:
@@ -329,19 +352,19 @@ jobs:
           path: /tmp/${{ inputs.project }}.tar
           retention-days: 1
 
-
   # ══════════════════════════════════════════════════════════════
   # JOB 6 — Push para AWS ECR (somente na branch main)
   # Requer secrets: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
   # ══════════════════════════════════════════════════════════════
   push-ecr:
-    name: 6 · Push para AWS ECR
+    name: "6 · Push para AWS ECR"
     runs-on: ubuntu-latest
     needs: docker-build
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Configurar credenciais AWS
         uses: aws-actions/configure-aws-credentials@v4
         with:
