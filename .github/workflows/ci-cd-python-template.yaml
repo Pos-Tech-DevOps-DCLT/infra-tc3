@@ -377,3 +377,184 @@ jobs:
           docker tag ${{ inputs.project }}:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:$SHORT_SHA
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$SHORT_SHA
           echo "✅ Imagem publicada: $ECR_REGISTRY/$ECR_REPOSITORY:$SHORT_SHA" >> $GITHUB_STEP_SUMMARY
+
+  # ══════════════════════════════════════════════════════════════
+  # JOB 7 — Atualização automática do GitOps (CD)
+  #
+  # Escreve a tag da imagem recém-publicada no ECR em
+  # charts/<project>/values.yaml do repositório GitOps (infra-tc3).
+  # O ArgoCD, com syncPolicy automated, detecta o commit e sincroniza
+  # a nova versão no cluster sem nenhuma ação manual.
+  #
+  # Requer o secret GITOPS_TOKEN — PAT fine-grained com permissão
+  # "Contents: Read and write" no repositório infra-tc3. O GITHUB_TOKEN
+  # padrão NÃO serve: ele só tem poder no repositório que dispara o run.
+  # ══════════════════════════════════════════════════════════════
+  update-gitops:
+    name: "7 · Atualizar GitOps (CD)"
+    runs-on: ubuntu-latest
+    needs: push-ecr
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    permissions:
+      contents: read
+    # Serializa runs do mesmo microsserviço. Corridas entre repositórios
+    # diferentes (5 CIs terminando juntos) são tratadas pelo retry com
+    # rebase no passo de push — concurrency group não cruza repositórios.
+    concurrency:
+      group: gitops-bump-${{ github.repository }}
+      cancel-in-progress: false
+    env:
+      PROJECT: ${{ inputs.project }}
+      GITOPS_REPO: Pos-Tech-DevOps-DCLT/infra-tc3
+    steps:
+      - name: Validar secret GITOPS_TOKEN
+        env:
+          GITOPS_TOKEN: ${{ secrets.GITOPS_TOKEN }}
+        run: |
+          if [ -z "${GITOPS_TOKEN:-}" ]; then
+            echo "::error title=Secret GITOPS_TOKEN ausente::Crie um PAT fine-grained com 'Contents: Read and write' em ${GITOPS_REPO} e salve como secret GITOPS_TOKEN (nivel de organizacao, ou em cada repositorio de microsservico)."
+            exit 1
+          fi
+          echo "✅ GITOPS_TOKEN presente."
+
+      - name: Checkout do repositório GitOps
+        uses: actions/checkout@v4
+        with:
+          repository: Pos-Tech-DevOps-DCLT/infra-tc3
+          ref: main
+          token: ${{ secrets.GITOPS_TOKEN }}
+          path: gitops
+          # Histórico completo: o rebase do retry precisa dele.
+          fetch-depth: 0
+
+      - name: Calcular tag da imagem
+        id: tag
+        run: |
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          echo "value=$SHORT_SHA" >> "$GITHUB_OUTPUT"
+          echo "Tag calculada: $SHORT_SHA"
+
+      - name: Atualizar image.tag no values.yaml
+        id: bump
+        working-directory: gitops
+        env:
+          NEW_TAG: ${{ steps.tag.outputs.value }}
+        run: |
+          set -euo pipefail
+          VALUES="charts/${PROJECT}/values.yaml"
+
+          if [ ! -f "$VALUES" ]; then
+            echo "::error title=Chart nao encontrado::$VALUES nao existe em ${GITOPS_REPO}."
+            exit 1
+          fi
+
+          OLD_TAG=$(yq -r '.image.tag' "$VALUES")
+          IMAGE_REPO=$(yq -r '.image.repository' "$VALUES")
+
+          echo "Arquivo .....: $VALUES"
+          echo "Imagem ......: $IMAGE_REPO"
+          echo "Tag atual ...: $OLD_TAG"
+          echo "Tag nova ....: $NEW_TAG"
+
+          {
+            echo "values=$VALUES"
+            echo "old_tag=$OLD_TAG"
+            echo "image=$IMAGE_REPO:$NEW_TAG"
+          } >> "$GITHUB_OUTPUT"
+
+          if [ "$OLD_TAG" = "$NEW_TAG" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "ℹ️ values.yaml já está em $NEW_TAG — nada a commitar."
+            exit 0
+          fi
+
+          # Edição cirúrgica com sed: preserva comentários e linhas em branco
+          # do arquivo. (yq -i reescreve o YAML inteiro e polui o diff.)
+          # Guarda: a chave 'tag:' precisa ser única dentro do values.yaml.
+          OCCURRENCES=$(grep -cE '^[[:space:]]*tag:' "$VALUES")
+          if [ "$OCCURRENCES" -ne 1 ]; then
+            echo "::error title=values.yaml inesperado::Encontradas $OCCURRENCES chaves 'tag:' em $VALUES — esperava exatamente 1. Revise o job 7 antes de prosseguir."
+            exit 1
+          fi
+
+          # Aspas obrigatórias: tags como '1234567' ou '1e5' seriam lidas
+          # como número/float e quebrariam o manifesto.
+          sed -i -E "s|^([[:space:]]*)tag:.*|\1tag: \"${NEW_TAG}\"|" "$VALUES"
+
+          # Verificação com parser YAML de verdade: arquivo válido, valor certo
+          # e no caminho certo (.image.tag) — confirma que o sed acertou a linha.
+          WROTE=$(yq -r '.image.tag' "$VALUES")
+          if [ "$WROTE" != "$NEW_TAG" ]; then
+            echo "::error title=Falha na escrita::Esperado '$NEW_TAG', encontrado '$WROTE'."
+            exit 1
+          fi
+
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          git --no-pager diff -- "$VALUES"
+
+      - name: Commit e push no repositório GitOps
+        if: steps.bump.outputs.changed == 'true'
+        working-directory: gitops
+        env:
+          NEW_TAG: ${{ steps.tag.outputs.value }}
+          VALUES: ${{ steps.bump.outputs.values }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add "$VALUES"
+          git commit \
+            -m "chore(${PROJECT}): atualiza image.tag para ${NEW_TAG} [skip ci]" \
+            -m "Origem: ${{ github.repository }}@${{ github.sha }}" \
+            -m "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          # Retry com rebase: se outro microsserviço commitou no meio do
+          # caminho, o push é rejeitado — rebase por cima e tenta de novo.
+          for ATTEMPT in 1 2 3 4 5; do
+            if git push origin HEAD:main; then
+              echo "✅ Push concluído na tentativa $ATTEMPT."
+              exit 0
+            fi
+            echo "⚠️ Push rejeitado (tentativa $ATTEMPT) — rebase e nova tentativa."
+            git pull --rebase --autostash origin main
+            sleep $((ATTEMPT * 3))
+          done
+
+          echo "::error title=Push falhou::Nao foi possivel atualizar ${GITOPS_REPO} apos 5 tentativas."
+          exit 1
+
+      - name: Publicar resumo no Job Summary
+        if: always()
+        env:
+          NEW_TAG: ${{ steps.tag.outputs.value }}
+          OLD_TAG: ${{ steps.bump.outputs.old_tag }}
+          VALUES: ${{ steps.bump.outputs.values }}
+          IMAGE: ${{ steps.bump.outputs.image }}
+          CHANGED: ${{ steps.bump.outputs.changed }}
+        run: |
+          echo "## 🚀 CD — Atualização automática do GitOps" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${CHANGED:-}" = "true" ]; then
+            echo "### ✅ Tag atualizada no repositório GitOps" >> $GITHUB_STEP_SUMMARY
+          elif [ "${CHANGED:-}" = "false" ]; then
+            echo "### ℹ️ Nenhuma mudança — a tag já estava atualizada" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### ❌ Falha ao atualizar o repositório GitOps" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Item | Valor |" >> $GITHUB_STEP_SUMMARY
+          echo "|:---|:---|" >> $GITHUB_STEP_SUMMARY
+          echo "| Microsserviço | \`${PROJECT}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Repositório GitOps | \`${GITOPS_REPO}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Arquivo alterado | \`${VALUES:-—}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Tag anterior | \`${OLD_TAG:-—}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Tag nova | \`${NEW_TAG:-—}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Imagem | \`${IMAGE:-—}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${CHANGED:-}" = "true" ]; then
+            echo "O ArgoCD (\`syncPolicy: automated\`) detecta o commit em até ~3 minutos e sincroniza a nova versão no cluster automaticamente." >> $GITHUB_STEP_SUMMARY
+          fi

@@ -17,6 +17,17 @@ This guide walks you through provisioning the AWS infrastructure and deploying t
 
 ---
 
+## Continuous delivery (GitOps)
+
+This repository is also the **GitOps repository**. After a microservice pipeline
+pushes an image to ECR, it commits the new tag into `charts/<service>/values.yaml`
+here, and ArgoCD syncs the cluster automatically.
+
+Setup (the `GITOPS_TOKEN` secret), design decisions and troubleshooting:
+**[docs/CD-GITOPS.md](docs/CD-GITOPS.md)**.
+
+---
+
 ## Part 1 — Install the tools
 
 Install these on your machine before starting.
