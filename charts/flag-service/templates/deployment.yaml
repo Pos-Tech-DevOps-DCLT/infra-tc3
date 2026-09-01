@@ -19,7 +19,8 @@ spec:
     spec:
       containers:
         - name: flag-service
-          image: 375546530898.dkr.ecr.us-east-1.amazonaws.com/tech-challenge-prod/flag-service:latest
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - containerPort: 8002
           resources:

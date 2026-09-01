@@ -19,9 +19,8 @@ spec:
     spec:
       containers:
         - name: auth-service
-          # Substitua <AWS_ACCOUNT_ID> pelo ID da sua conta AWS
-          # Obter: aws sts get-caller-identity --query Account --output text
-          image: 375546530898.dkr.ecr.us-east-1.amazonaws.com/tech-challenge-prod/auth-service:latest
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - containerPort: 8001
           resources:

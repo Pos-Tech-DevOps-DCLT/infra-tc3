@@ -21,7 +21,8 @@ spec:
       serviceAccountName: analytics-service
       containers:
         - name: analytics-service
-          image: 375546530898.dkr.ecr.us-east-1.amazonaws.com/tech-challenge-prod/analytics-service:latest
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - containerPort: 8005
           resources:
