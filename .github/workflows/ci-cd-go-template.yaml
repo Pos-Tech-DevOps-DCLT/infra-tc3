@@ -178,7 +178,7 @@ jobs:
           scan-ref: '.'
           format: table
           severity: CRITICAL,HIGH
-          exit-code: '0'
+          exit-code: '1'
 
       - name: Trivy — salvar relatório JSON
         uses: aquasecurity/trivy-action@master
@@ -314,7 +314,7 @@ jobs:
           echo "| ⚪ INFO | $INFO_COUNT |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
-          if [ "$CRITICAL_COUNT" -gt 10 ]; then
+          if [ "$CRITICAL_COUNT" -gt 0 ]; then
             echo "❌ **Pipeline bloqueada** — $CRITICAL_COUNT vulnerabilidade(s) CRITICAL encontrada(s)." >> $GITHUB_STEP_SUMMARY
             exit 1
           else
