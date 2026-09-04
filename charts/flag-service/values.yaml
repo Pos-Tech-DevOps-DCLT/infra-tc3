@@ -1,4 +1,4 @@
-replicaCount: 1
+replicaCount: 0
 
 image:
   repository: 375546530898.dkr.ecr.us-east-1.amazonaws.com/tech-challenge-prod/flag-service
